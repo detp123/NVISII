@@ -10,7 +10,7 @@ namespace nvisii {
 struct TextureInfo {
     std::string path = "";
     bool is_bump = false;
-    bool is_linear = false;
+    bool is_linear = false;  TextureInfo(const std::string& p, bool bump, bool linear):path(p), is_bump(bump), is_linear(linear) {}
 };
 
 struct TextureInfoCompare {

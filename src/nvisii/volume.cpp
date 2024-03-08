@@ -491,4 +491,10 @@ void Volume::setGradientFactor(float factor)
     markDirty();
 }
 
+void Volume::setGParameter(float g_parameter)
+{
+    this->volumeStructs[id].g_parameter = g_parameter;
+    markDirty();
+}
+
 };

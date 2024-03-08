@@ -11,6 +11,7 @@
 #include <optix_device.h>
 #include <owl/common/math/random.h>
 #include <owl/common/math/box.h>
+#include "test.h"
 
 #include "nvisii/utilities/procedural_sky.h"
 
@@ -34,6 +35,7 @@ struct RayPayload {
     float3 gradient;
     float3 mp;
     float density;
+    float g_asy_parameter;
 
     float tHit = -1.f;
     float localToWorld[12];
@@ -323,7 +325,7 @@ OPTIX_INTERSECT_PROGRAM(VolumeIntersection)()
     auto nvdbSampler = nanovdb::SampleFromVoxels<nanovdb::DefaultReadAccessor<float>, 
         /*Interpolation Degree*/1, /*UseCache*/false>(acc);
 
-    float majorant_extinction = acc.root().valueMax();
+    float majorant_extinction = acc.root().valueMax(); float minorant_extinction = acc.root().valueMin();
     float gradient_factor = volume.gradient_factor;
     float linear_attenuation_unit = volume.scale;
     float absorption = volume.absorption;
@@ -377,6 +379,9 @@ OPTIX_INTERSECT_PROGRAM(VolumeIntersection)()
                 prd.mp = x - offset; // not super confident about this offset...
                 prd.gradient = make_float3(g[0], g[1], g[2]);// TEMPORARY FOR BUNNY
                 prd.density = densityValue;
+		prd.g_asy_parameter = 2.0f*( (prd.density-minorant_extinction) / (majorant_extinction-minorant_extinction) )- 1.0f; prd.g_asy_parameter =0.0f;
+		prd.g_asy_parameter = volume.g_parameter;
+    		//{printf("Object Int Event: %d, Density: %.3f, Value[%0.3f-%0.3f], g_asy_paramter: %0.3f\n", prd.eventID, prd.density, majorant_extinction, minorant_extinction, prd.g_asy_parameter);}
             }
             return;
         }
@@ -865,12 +870,12 @@ OPTIX_RAYGEN_PROGRAM(rayGen)()
     owl::traceRay(  /*accel to trace against*/ LP.IAS,
                     /*the ray to trace*/ ray,
                     /*prd*/ payload,
-                    OPTIX_RAY_FLAG_DISABLE_ANYHIT);
+                    OPTIX_RAY_FLAG_DISABLE_ANYHIT); 
     
     // Shade each hit point on a path using NEE with MIS
     do {     
         float alpha = 0.f;
-        
+	printRayInfo(LP, pixelID, ray, payload, "Loop Ray");
         // If ray misses, terminate the ray
         if (payload.tHit <= 0.f) {
             // Compute lighting from environment
@@ -912,7 +917,7 @@ OPTIX_RAYGEN_PROGRAM(rayGen)()
         
         // Set new outgoing light direction and hit position.
         const float3 w_o = -ray.direction;
-        float3 hit_p = ray.origin + payload.tHit * ray.direction;
+        float3 hit_p = ray.origin + payload.tHit * ray.direction;   printRayInfo(LP, pixelID, ray, payload,"HitPoint", hit_p);
 
         // Load geometry data for the hit object
         float3 mp, p, v_x, v_y, v_z, v_gz, v_bz; 
@@ -1051,7 +1056,7 @@ OPTIX_RAYGEN_PROGRAM(rayGen)()
                 // ray.visibilityMask reuses the last visibility mask here
                 owl::traceRay( LP.IAS, ray, payload, OPTIX_RAY_FLAG_DISABLE_ANYHIT);                
                 ++depth;     
-                transparencyDepth++;
+                transparencyDepth++;printRayInfo(LP, pixelID, ray, payload, "Transparent");
                 continue;
             }
         }
@@ -1062,7 +1067,6 @@ OPTIX_RAYGEN_PROGRAM(rayGen)()
         if (entity.light_id >= 0 && entity.light_id < LP.lights.count) {
             float dotNWi = max(dot(ray.direction, v_z), 0.f);
             if ((dotNWi > EPSILON) && (depth != 0)) break;
-
             GET(LightStruct entityLight, LightStruct, LP.lights, entity.light_id);
             float3 lightEmission;
             if (entityLight.color_texture_id == -1) lightEmission = make_float3(entityLight.r, entityLight.g, entityLight.b);
@@ -1085,7 +1089,7 @@ OPTIX_RAYGEN_PROGRAM(rayGen)()
         if (isVolume) {
             float opacity = mat.alpha; // would otherwise be sampled from a transfer function
             float grad_len = uv.y;
-            float p_brdf = opacity * (1.f - exp(-25.f * pow(volume.gradient_factor, 3.f) * grad_len));
+            float p_brdf = opacity * (1.f - exp(-25.f * pow(volume.gradient_factor, 3.f) * grad_len)); p_brdf=0.0f;// printRayInfo(LP, pixelID, ray, payload,"p_BRDF", p_brdf);
             float pdf;
             float rand_brdf = lcg_randomf(rng);
             
@@ -1103,44 +1107,69 @@ OPTIX_RAYGEN_PROGRAM(rayGen)()
         if (useBRDF) {
             sample_disney_brdf(
                 mat, rng, v_gz, v_z, v_bz, v_x, v_y, w_o, // inputs
-                w_i, bsdfPDF, sampledBsdf, bsdf);         // outputs
+                w_i, bsdfPDF, sampledBsdf, bsdf);         /* outputs*/printRayInfo(LP, pixelID, ray, payload,"Disney wi",w_i);
         } else {
             /* a scatter event occurred */
             if (payload.eventID == 2) {
                 // currently isotropic. Todo: implement henyey greenstien...
                 float rand1 = lcg_randomf(rng);
                 float rand2 = lcg_randomf(rng);
+                float rand3 = lcg_randomf(rng);
 
                 // Sample isotropic phase function to get new ray direction           
-                float phi = 2.0f * M_PI * rand1;
+                /*
+		float phi = 2.0f * M_PI * rand1;
                 float cos_theta = 1.0f - 2.0f * rand2;
                 float sin_theta = sqrt (1.0f - cos_theta * cos_theta);
                 
                 bsdfPDF = 1.f / (4.0 * M_PI);
                 bsdf = make_float3(1.f / (4.0 * M_PI));
-                w_i = make_float3(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta);
+                w_i = make_float3(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta); printRayInfo(LP, pixelID, ray, payload,"Scattering",w_i);
+		*/
+		// Henyey Greenstein phase function to get new ray direction
+		
+		float apg = payload.g_asy_parameter;
+		float cos_alpha	= 2.0f * rand1 - 1.0f;
+		float cos_beta  = 2.0f * rand2 - 1.0f;
+		float cos_gamma = 2.0f * rand3 - 1.0f;
+		if (apg != 0.00) {
+			cos_alpha = (1.0f/(2.0f*apg))*(1.0f+apg*apg-( (1.0f-apg*apg) / (1.0f-apg+2.0f*apg*rand1) )*( (1.0f-apg*apg) / (1.0f-apg+2.0f*apg*rand1) ));
+			cos_beta  = (1.0f/(2.0f*apg))*(1.0f+apg*apg-( (1.0f-apg*apg) / (1.0f-apg+2.0f*apg*rand2) )*( (1.0f-apg*apg) / (1.0f-apg+2.0f*apg*rand2) ));
+			cos_gamma = (1.0f/(2.0f*apg))*(1.0f+apg*apg-( (1.0f-apg*apg) / (1.0f-apg+2.0f*apg*rand3) )*( (1.0f-apg*apg) / (1.0f-apg+2.0f*apg*rand3) ));}
+		float3 cos_HG = make_float3( cos_alpha, cos_beta, cos_gamma);
+		float cos_theta_wo_wi = 0.0f;
+		w_i = DeviatedVector(w_o, cos_HG, &cos_theta_wo_wi);
+		printRayInfo(LP, pixelID, ray, payload, "wo", w_o);
+		printRayInfo(LP, pixelID, ray, payload, "cos_alpa_beta_gamma", cos_HG);
+		printRayInfo(LP, pixelID, ray, payload, "wi", w_i);
+		printRayInfo(LP, pixelID, ray, payload, "cos_thet_wo_wi", cos_theta_wo_wi);
+		printRayInfo(LP, pixelID, ray, payload, "g_parameter", apg);
+                float cos_phi = cos_theta_wo_wi;
+		bsdfPDF = (1.0f-apg*apg) / ( (4.0 * M_PI)*(1+apg*apg-2.0f*apg*cos_phi)*sqrt(1+apg*apg-2.0f*apg*cos_phi) );
+                bsdf = make_float3( bsdfPDF   );
+                printRayInfo(LP, pixelID, ray, payload,"HenyeyGreensteinAngle",w_i);
             } 
 
             /* An absorption / emission event occurred */ 
             if (payload.eventID == 1) {
-                bsdfPDF = 1.f / (4.0 * M_PI);
-                bsdf = make_float3(1.f / (4.0 * M_PI));
+                bsdfPDF = (1.0f) / (4.0 * M_PI);
+                bsdf = make_float3( 1.0f / (4.0 * M_PI)   );
                 w_i = -w_o;
             }
 
             // For all events, modify throughput by base color.
             bsdf = bsdf * mat.base_color;
-        }
+        } //w_i = make_float3(0.0f, 1.0f, 0.0f);printRayInfo(LP, pixelID, ray, payload,"FixedAngle",w_i);
 
         // At this point, if we are refracting and we ran out of transmission bounces, skip forward.
         // This avoids creating black regions on glass objects due to bounce limits
         if (sampledBsdf == DISNEY_TRANSMISSION_BRDF && transmissionDepth >= LP.maxTransmissionDepth) {
-            ray.origin = ray.origin + ray.direction * (payload.tHit + EPSILON);
+            ray.origin = ray.origin + ray.direction * (payload.tHit + EPSILON);  printRayInfo(LP, pixelID, ray, payload, "Bounces");
             payload.tHit = -1.f;
             ray.time = time;
             // ray.visibilityMask reuses the last visibility mask here
             owl::traceRay( LP.IAS, ray, payload, OPTIX_RAY_FLAG_DISABLE_ANYHIT);
-            
+            printRayInfo(LP, pixelID, ray, payload, "After Bounces");
             // Count this as a "transparent" bounce.
             ++depth;     
             transparencyDepth++;
@@ -1253,14 +1282,14 @@ OPTIX_RAYGEN_PROGRAM(rayGen)()
                     lcg_randomf(rng), lcg_randomf(rng), dir, lightDistance, lightPDF, uv, 
                     /*double_sided*/ false, /*use surface area*/ light_light.use_surface_area);
                 numTris = mesh.numTris;
-            }
+            }printRayInfo(LP, pixelID, ray, payload,"SampleTriLightPDF",lightPDF);
             
             falloff = light_light.falloff;
             lightDir = make_float3(dir.x, dir.y, dir.z);
             if (light_light.color_texture_id == -1) lightEmission = make_float3(light_light.r, light_light.g, light_light.b) * (light_light.intensity * pow(2.f, light_light.exposure));
             else lightEmission = sampleTexture(light_light.color_texture_id, uv, make_float3(0.f, 0.f, 0.f)) * (light_light.intensity * pow(2.f, light_light.exposure));
         }
-
+printRayInfo(LP, pixelID, ray, payload,"V_z",v_z);
         if (useBRDF) {
             disney_brdf(
                 mat, v_gz, v_z, v_bz, v_x, v_y,
@@ -1274,20 +1303,20 @@ OPTIX_RAYGEN_PROGRAM(rayGen)()
         } else {
             // currently isotropic. Todo: implement henyey greenstien...
             l_bsdf = make_float3(1.f / (4.0 * M_PI)) * mat.base_color;
-            dotNWi = 1.f; // no geom term for phase function
+            dotNWi = 1.f*max(dot(lightDir, ray.direction), 0.f); // no geom term for phase function
         }
-        lightPDF *= (1.f / float(numLights + 1.f)) * (1.f / float(numTris));
+        lightPDF *= (1.f / float(numLights + 1.f)) * (1.f / float(numTris));printRayInfo(LP, pixelID, ray, payload,"LightPDF",lightPDF);printRayInfo(LP, pixelID, ray, payload,"LightDir",lightDir);printRayInfo(LP, pixelID, ray, payload,"dotNWi",dotNWi);
         if ((lightPDF > 0.0) && (dotNWi > EPSILON)) {
             RayPayload payload; payload.instanceID = -2;
             RayPayload volPayload = payload;
             owl::RayT</*type*/1, /*prd*/1> ray; // shadow ray
             ray.tmin = EPSILON * 10.f; ray.tmax = lightDistance + EPSILON; // needs to be distance to light, else anyhit logic breaks.
             ray.origin = hit_p; ray.direction = lightDir;
-            ray.time = time;
+            ray.time = time;//printRayInfo(LP, pixelID, ray, payload, "LightDir");//ray.direction=make_float3(0.0f,0.0f,1.0f);printRayInfo(LP, pixelID, ray, payload, "LighDirChanged");
             ray.visibilityMask = ENTITY_VISIBILITY_SHADOW_RAYS;
             owl::traceRay( LP.IAS, ray, payload, occlusion_flags);
             ray.tmax = (payload.instanceID == -2) ? ray.tmax : payload.tHit;
-            bool visible;
+            bool visible; 
             if (randomID == numLights) {
                 //  If we sampled the dome light, just check to see if we hit anything
                 visible = (payload.instanceID == -2);
@@ -1298,7 +1327,7 @@ OPTIX_RAYGEN_PROGRAM(rayGen)()
                 else { GET(surfEntity, int, LP.instanceToEntity, payload.instanceID); }
                 visible = (payload.instanceID == -2 || surfEntity == sampledLightID);
             }
-            if (visible) {
+            if (visible) {printRayInfo(LP, pixelID, ray, payload, "Visible Trace");
                 if (randomID != numLights) lightEmission = lightEmission / max(pow(payload.tHit, falloff),1.f);
                 float w = power_heuristic(1.f, lightPDF, 1.f, bsdfPDF);
                 float3 Li = (lightEmission * w) / lightPDF;
@@ -1306,7 +1335,7 @@ OPTIX_RAYGEN_PROGRAM(rayGen)()
             }
         }
 
-        // For segmentations, save lighting metadata
+        /* For segmentations, save lighting metadata*/printRayInfo(LP, pixelID, ray, payload, "Saving, see wi", w_i);
         saveLightingColorRenderData(renderData, depth, v_z, w_o, w_i, mat);
 
         // Terminate the path if the bsdf probability is impossible, or if the bsdf filters out all light
@@ -1315,7 +1344,7 @@ OPTIX_RAYGEN_PROGRAM(rayGen)()
             illum = illum + contribution;
             break;
         }
-
+				printRayInfo(LP, pixelID, ray, payload,"Before direction change");
         // Next, sample a light source using the importance sampled BDRF direction.
         ray.origin = hit_p;
         ray.direction = w_i;
@@ -1328,14 +1357,14 @@ OPTIX_RAYGEN_PROGRAM(rayGen)()
         else if (sampledBsdf == DISNEY_DIFFUSE_BRDF) ray.visibilityMask = ENTITY_VISIBILITY_DIFFUSE_RAYS;
         else if (sampledBsdf == DISNEY_GLOSSY_BRDF) ray.visibilityMask = ENTITY_VISIBILITY_GLOSSY_RAYS;
         else if (sampledBsdf == DISNEY_CLEARCOAT_BRDF) ray.visibilityMask = ENTITY_VISIBILITY_GLOSSY_RAYS;
-        owl::traceRay(LP.IAS, ray, payload, OPTIX_RAY_FLAG_DISABLE_ANYHIT);
-
+        owl::traceRay(LP.IAS, ray, payload, OPTIX_RAY_FLAG_DISABLE_ANYHIT);printRayInfo(LP, pixelID, ray, payload,"Traced direction change");
+				
         // Check if we hit any of the previously sampled lights
         bool hitLight = false;
         if (lightPDF > EPSILON) 
-        {
+        {								printRayInfo(LP, pixelID, ray, payload,"dotWi_v_gz", v_gz);
             float dotNWi = (useBRDF) ? max(dot(ray.direction, v_gz), 0.f) : 1.f;  // geometry term
-
+									printRayInfo(LP, pixelID, ray, payload,"After dotNWi", dotNWi);
             // if by sampling the brdf we also hit the dome light...
             if ((payload.instanceID == -1) && (sampledLightID == -1) && enableDomeSampling) {
                 // Case where we hit the background, and also previously sampled the background   
@@ -1414,7 +1443,7 @@ OPTIX_RAYGEN_PROGRAM(rayGen)()
         
         // for transmission, once we hit the limit, we'll stop refracting instead 
         // of terminating, just so that we don't get black regions in our glass
-        if (transmissionDepth >= LP.maxTransmissionDepth) continue;
+        if (transmissionDepth >= LP.maxTransmissionDepth) continue;printRayInfo(LP, pixelID, ray, payload, "Loop End");
     } while (
         // Terminate the path if the sampled BRDF's corresponding bounce depth exceeds the max bounce for that bounce type minus the overall path depth.
         // This prevents long tails that can otherwise occur from mixing BRDF events

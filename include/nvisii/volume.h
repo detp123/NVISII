@@ -246,6 +246,9 @@ class Volume : public StaticFactory
 	/** todo... document */
 	float getMax(uint32_t level, uint32_t node_idx);
 
+	/** todo... document */
+	void setGParameter(float g_parameter);
+
   private:
 
   	/* TODO */

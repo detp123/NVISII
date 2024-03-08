@@ -1,0 +1,5 @@
+/beegfs/teran_parrales/NVISII/install/nvisii/libnvisii_lib.a
+/beegfs/teran_parrales/NVISII/install/nvisii/__init__.py
+/beegfs/teran_parrales/NVISII/install/nvisii/_nvisii.so
+/beegfs/teran_parrales/NVISII/install/setup.py
+/beegfs/teran_parrales/NVISII/install/nvisii//importers/__init__.py

@@ -1,0 +1,4 @@
+all:
+	cmake .
+	make install
+	cp ../__init__.py ./install/nvisii/

@@ -18,4 +18,5 @@ struct VolumeStruct
     float scale = 1.f;
     float absorption = 0.5f;
     float scattering = 0.5f;
+    float g_parameter= 0.0f;
 };
